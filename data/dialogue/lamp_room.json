@@ -1,7 +1,94 @@
 {
 	"start": {
 		"speaker": "",
-		"text": "The lamp room is colder than the stair. The great light stands dead at its center, the lens dark as a drowned eye. (Draft \u2014 lamp-room content is in progress for the public demo.)",
+		"text": "At the top of the stair, the wind finds a seam in every pane. The great lens stands dark. Beside the burner: a trimmed wick, a box of matches, and a tin with a little paraffin still in it.",
+		"choices": [
+			{
+				"text": "Check the lamp before lighting it.",
+				"next": "inspect"
+			},
+			{
+				"text": "Edith left it ready for someone.",
+				"requires_flags": {
+					"trusted_edith": true
+				},
+				"next": "edith"
+			},
+			{
+				"text": "Fill the burner and strike a match.",
+				"next": "relight"
+			}
+		]
+	},
+	"inspect": {
+		"speaker": "",
+		"text": "No cracked glass. No broken feed. A pale thumbprint marks the brass beneath the wick adjuster. Someone polished everything except the place they held on.",
+		"next": "relight"
+	},
+	"edith": {
+		"speaker": "",
+		"text": "You turn the matchbox over. The striking strip is worn almost smooth. You put it back exactly where she left it, then think better of that and take a match.",
+		"next": "relight"
+	},
+	"relight": {
+		"speaker": "",
+		"text": "The first match goes out. You cup the second in both hands. The wick catches; the flame settles. Beyond the glass, a narrow reach of water comes back into the world.",
+		"next": "answer"
+	},
+	"answer": {
+		"speaker": "",
+		"text": "Out past the north rocks, a light appears. Three flashes. Then dark. You count through the silence. It happens again.",
+		"choices": [
+			{
+				"text": "Look for the buoy that could be making it.",
+				"requires_flags": {
+					"skeptic": true
+				},
+				"next": "skeptic_view"
+			},
+			{
+				"text": "Watch for the rhythm Edith described.",
+				"requires_flags": {
+					"believer": true
+				},
+				"next": "believer_view"
+			},
+			{
+				"text": "Go down and tell Tom what you saw.",
+				"requires_flags": {
+					"radioed_tom": true
+				},
+				"next": "tom_view"
+			},
+			{
+				"text": "Stay beside the lamp and watch.",
+				"next": "watch"
+			}
+		]
+	},
+	"skeptic_view": {
+		"speaker": "",
+		"text": "You find the buoy when the beam comes round. Its light is steady. The other one is gone. You keep looking for a second buoy.",
+		"next": "end"
+	},
+	"believer_view": {
+		"speaker": "",
+		"text": "Three flashes. You count them against the words in the ledger. On the next sweep, you lift a hand before you know why. Nothing in the glass moves but your reflection.",
+		"next": "end"
+	},
+	"tom_view": {
+		"speaker": "",
+		"text": "You take one step toward the stair. From here the radio is only a floor below, but you rehearse the words as if Tom were very far away. A light. Three flashes. No, not the buoy.",
+		"next": "end"
+	},
+	"watch": {
+		"speaker": "",
+		"text": "You draw the stool up beside the lens. The seat is cold through your clothes. You leave your hands in your lap and wait for the beam to come round.",
+		"next": "end"
+	},
+	"end": {
+		"speaker": "",
+		"text": "The lamp turns. The north rocks disappear into fog again. You keep counting after there is nothing left to count.",
 		"next": null
 	}
 }
