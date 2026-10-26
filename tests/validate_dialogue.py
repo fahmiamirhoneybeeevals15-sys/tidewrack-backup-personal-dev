@@ -15,9 +15,11 @@ from pathlib import Path
 
 KNOWN_ENTRIES = {"logbook", "radio", "door", "start"}
 JOURNAL_ENTRY_PREFIX = "entry_"
+# Canonical source: docs/narrative-bible.md, Story flags (canonical).
+ALLOWED_FLAGS = frozenset({"skeptic", "believer", "trusted_edith", "radioed_tom"})
 # Declare flags produced by gameplay outside dialogue here, with the values
 # reachable before a conversation. Keep empty until real gameplay producers
-# exist. Example: {"lamp_relit": (False, True)}. No CLI configuration needed.
+# exist. Only ALLOWED_FLAGS may be declared. No CLI configuration needed.
 EXTERNAL_FLAG_VALUES: dict[str, tuple[bool, ...]] = {}
 MAX_STATES = 100_000
 ROOT = Path(__file__).resolve().parent.parent
@@ -62,6 +64,9 @@ def check_schema(path: Path, graph: object) -> list[str]:
         for key, val in value.items():
             if not isinstance(key, str) or not key:
                 error(where, "flag names must be nonempty strings")
+            elif key not in ALLOWED_FLAGS:
+                field = "requires_flags" if requirements else "set_flag"
+                error(where, f"unknown flag '{key}' in {field}; allowed: {', '.join(sorted(ALLOWED_FLAGS))}")
             if requirements and type(val) is not bool:
                 error(where, "requires_flags values must be booleans")
     def target(item, where):
@@ -127,7 +132,7 @@ def analyze(graphs: dict[Path, dict], external=None, max_states=MAX_STATES):
                     if key not in producers:
                         errors.append(f"{path.name}:{nid}:choice #{i}: missing prerequisite flag '{key}' (no dialogue producer or external declaration)")
     for key, values in external.items():
-        if not isinstance(key, str) or not key or not values or any(type(v) is not bool for v in values):
+        if key not in ALLOWED_FLAGS or not isinstance(values, (tuple, list)) or not values or any(type(v) is not bool for v in values):
             errors.append(f"invalid external flag declaration: {key!r}")
     if errors:
         return errors, warnings
