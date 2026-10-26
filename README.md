@@ -85,6 +85,8 @@ Any node can set story flags via `"set_flag"`, which `GameState` persists.
 }
 ```
 
+Dialogue choices may include an optional `requires_flags` object, such as `"requires_flags": {"trusted_edith": true}`; the choice is shown only when every listed boolean matches `GameState`. Allowed flag names are `skeptic`, `believer`, `trusted_edith`, and `radioed_tom`. Missing flags count as `false`, so a false requirement also matches an unset flag; omit `requires_flags` or use `{}` for an unconditional choice. Node `set_flag` effects run before filtering, while choice effects run only after selection and a fresh prerequisite check. The manager resolves button indices against the displayed choices, keeping hidden options from shifting selections. Keep an unconditional fallback at each choice node, and run `python3 tests/validate_dialogue.py` to check flag names, prerequisites, reachability, and dead ends. Conditions live in dialogue JSON and do not change the save format.
+
 ## Verifying changes
 
 ```bash

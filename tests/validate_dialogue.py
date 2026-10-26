@@ -1,106 +1,253 @@
 #!/usr/bin/env python3
-"""Validate Tidewrack dialogue graphs without needing the Godot engine.
+"""Validate all data/dialogue/*.json; no arguments or Godot required.
 
-Checks, for every data/dialogue/*.json file:
-  - it parses as a JSON object of node_id -> node
-  - each node is either a linear node ("next": id|null) or a choice node
-    ("choices": [{text, next, set_flag?}]) — not neither, not both
-  - every referenced target id exists
-  - at least one terminal (next == null) is reachable from an entry point
-  - reports orphan nodes (unreachable from any known entry) as warnings
-
-Exit code 0 = all valid, 1 = at least one error.
-
-Usage:  python3 tests/validate_dialogue.py
+Exit 0 = valid, 1 = errors. Conditions use strict booleans, absent = false.
+Explores persistent flag states across completed/repeated conversations.
+Entry availability is conservative: every known entry may be started after
+any completed conversation. Scene/puzzle ordering is not modeled.
 """
 from __future__ import annotations
 
+from collections import defaultdict, deque
+from itertools import product
 import json
-import sys
 from pathlib import Path
 
-# Entry-point node ids the game starts graphs from (see scripts/game.gd).
 KNOWN_ENTRIES = {"logbook", "radio", "door", "start"}
-
+JOURNAL_ENTRY_PREFIX = "entry_"
+# Canonical source: docs/narrative-bible.md, Story flags (canonical).
+ALLOWED_FLAGS = frozenset({"skeptic", "believer", "trusted_edith", "radioed_tom"})
+# Declare flags produced by gameplay outside dialogue here, with the values
+# reachable before a conversation. Keep empty until real gameplay producers
+# exist. Only ALLOWED_FLAGS may be declared. No CLI configuration needed.
+EXTERNAL_FLAG_VALUES: dict[str, tuple[bool, ...]] = {}
+MAX_STATES = 100_000
 ROOT = Path(__file__).resolve().parent.parent
 DIALOGUE_DIR = ROOT / "data" / "dialogue"
 
 
+def is_journal_graph(graph: dict) -> bool:
+    return any(k.startswith(JOURNAL_ENTRY_PREFIX) for k in graph)
+
+
+def entries_for(graph: dict) -> set[str]:
+    return (KNOWN_ENTRIES & graph.keys()) | {
+        k for k in graph if k.startswith(JOURNAL_ENTRY_PREFIX)
+    }
+
+
 def reachable(graph: dict, entries: set[str]) -> set[str]:
-    seen: set[str] = set()
-    stack = [e for e in entries if e in graph]
+    """Structural reachability; call only after schema validation."""
+    seen = set()
+    stack = list(entries)
     while stack:
         nid = stack.pop()
         if nid in seen:
             continue
         seen.add(nid)
         node = graph[nid]
-        targets: list[str] = []
-        if isinstance(node.get("choices"), list):
-            targets += [c.get("next") for c in node["choices"]]
-        if "next" in node:
-            targets.append(node.get("next"))
-        for t in targets:
-            if isinstance(t, str) and t in graph:
-                stack.append(t)
+        edges = node["choices"] if "choices" in node else [node]
+        stack.extend(c["next"] for c in edges if c["next"] is not None)
     return seen
 
 
-def validate_file(path: Path) -> tuple[list[str], list[str]]:
-    errors: list[str] = []
-    warnings: list[str] = []
-
-    try:
-        graph = json.loads(path.read_text())
-    except json.JSONDecodeError as exc:
-        return [f"{path.name}: invalid JSON — {exc}"], warnings
-
-    if not isinstance(graph, dict):
-        return [f"{path.name}: top level must be an object of node_id -> node"], warnings
-
-    has_terminal = False
+def check_schema(path: Path, graph: object) -> list[str]:
+    errors = []
+    def error(where, message):
+        errors.append(f"{path.name}:{where}: {message}")
+    if not isinstance(graph, dict) or not graph:
+        return [f"{path.name}: top level must be a nonempty object of node_id -> node"]
+    def flags(value, where, requirements=False):
+        if not isinstance(value, dict):
+            error(where, "flags must be an object")
+            return
+        for key, val in value.items():
+            if not isinstance(key, str) or not key:
+                error(where, "flag names must be nonempty strings")
+            elif key not in ALLOWED_FLAGS:
+                field = "requires_flags" if requirements else "set_flag"
+                error(where, f"unknown flag '{key}' in {field}; allowed: {', '.join(sorted(ALLOWED_FLAGS))}")
+            if requirements and type(val) is not bool:
+                error(where, "requires_flags values must be booleans")
+    def target(item, where):
+        if "next" not in item:
+            error(where, "missing explicit 'next' (use null to end)")
+        elif item["next"] is not None and (
+            not isinstance(item["next"], str) or item["next"] not in graph
+        ):
+            error(where, f"'next' points to missing/invalid node {item['next']!r}")
     for nid, node in graph.items():
-        if not isinstance(node, dict):
-            errors.append(f"{path.name}:{nid}: node must be an object")
+        if not nid or not isinstance(node, dict):
+            error(str(nid), "node must have a nonempty ID and an object value")
             continue
+        if "requires_flags" in node:
+            error(nid, "requires_flags is supported on choices only")
+        if "set_flag" in node:
+            flags(node["set_flag"], nid)
+        if ("choices" in node) == ("next" in node):
+            error(nid, "node must have exactly one of 'next' or 'choices'")
+        if "next" in node:
+            target(node, nid)
+        if "choices" not in node:
+            continue
+        choices = node["choices"]
+        if not isinstance(choices, list) or not choices:
+            error(nid, "choices must be a nonempty array")
+            continue
+        for i, choice in enumerate(choices):
+            where = f"{nid}:choice #{i}"
+            if not isinstance(choice, dict):
+                error(where, "choice must be an object")
+                continue
+            if not isinstance(choice.get("text"), str):
+                error(where, "choice needs a string 'text'")
+            target(choice, where)
+            if "set_flag" in choice:
+                flags(choice["set_flag"], where)
+            if "requires_flags" in choice:
+                flags(choice["requires_flags"], where, True)
+    return errors
 
-        has_choices = isinstance(node.get("choices"), list) and len(node["choices"]) > 0
-        has_next = "next" in node
 
-        if not has_choices and not has_next:
-            errors.append(f"{path.name}:{nid}: node has neither 'next' nor 'choices'")
-        if has_choices and has_next:
-            errors.append(f"{path.name}:{nid}: node has both 'next' and 'choices' (ambiguous)")
+def analyze(graphs: dict[Path, dict], external=None, max_states=MAX_STATES):
+    """Exact boolean-condition abstraction; unrelated flag values are ignored.
 
-        if has_next and node.get("next") is None:
-            has_terminal = True
-
-        if has_next and isinstance(node.get("next"), str) and node["next"] not in graph:
-            errors.append(f"{path.name}:{nid}: 'next' points to missing node '{node['next']}'")
-
-        if has_choices:
-            for i, choice in enumerate(node["choices"]):
-                if not isinstance(choice, dict) or "text" not in choice:
-                    errors.append(f"{path.name}:{nid}: choice #{i} needs a 'text' field")
-                    continue
-                target = choice.get("next")
-                if target is not None and (not isinstance(target, str) or target not in graph):
-                    errors.append(f"{path.name}:{nid}: choice #{i} 'next' -> missing node '{target}'")
-                if target is None:
-                    has_terminal = True
-
-    if not has_terminal:
-        errors.append(f"{path.name}: no terminal node (a node with next == null) — the graph never ends")
-
-    entries = KNOWN_ENTRIES & set(graph.keys())
-    if not entries:
-        warnings.append(f"{path.name}: no known entry point ({sorted(KNOWN_ENTRIES)}) present")
-    else:
-        seen = reachable(graph, entries)
-        for orphan in sorted(set(graph) - seen):
-            warnings.append(f"{path.name}:{orphan}: unreachable from entry points {sorted(entries)}")
-
+    Each relevant flag is false (also absent), true, or non-boolean. The third
+    category never matches a boolean requirement, matching GameState exactly.
+    Paths remain separate; flag sets are never unioned at branch merges.
+    """
+    external = EXTERNAL_FLAG_VALUES if external is None else external
+    errors, warnings = [], []
+    producers, required = set(external), set()
+    for graph in graphs.values():
+        for node in graph.values():
+            producers.update(node.get("set_flag", {}))
+            for choice in node.get("choices", []):
+                producers.update(choice.get("set_flag", {}))
+                required.update(choice.get("requires_flags", {}))
+    for path, graph in graphs.items():
+        for nid, node in graph.items():
+            for i, choice in enumerate(node.get("choices", [])):
+                for key in choice.get("requires_flags", {}):
+                    if key not in producers:
+                        errors.append(f"{path.name}:{nid}:choice #{i}: missing prerequisite flag '{key}' (no dialogue producer or external declaration)")
+    for key, values in external.items():
+        if key not in ALLOWED_FLAGS or not isinstance(values, (tuple, list)) or not values or any(type(v) is not bool for v in values):
+            errors.append(f"invalid external flag declaration: {key!r}")
+    if errors:
+        return errors, warnings
+    keys = sorted(required)
+    slots = {key: i for i, key in enumerate(keys)}
+    def apply(state, effects):
+        result = list(state)
+        for key, val in effects.items():
+            if key in slots:
+                result[slots[key]] = int(val) if type(val) is bool else 2
+        return tuple(result)
+    def allows(state, requirements):
+        return all(state[slots[k]] == int(v) for k, v in requirements.items())
+    entries = []
+    structural = {}
+    for path, graph in graphs.items():
+        starts = entries_for(graph)
+        if not starts:
+            errors.append(f"{path.name}: no known entry point; add its real entry to KNOWN_ENTRIES")
+        structural[path] = reachable(graph, starts)
+        entries.extend((path, nid) for nid in sorted(starts))
+        for nid in sorted(graph.keys() - structural[path]):
+            warnings.append(f"{path.name}:{nid}: structurally unreachable from known entries")
+    queue, discovered = deque(), set()
+    reverse = defaultdict(set)
+    terminals, seen_nodes, chosen, blocked = set(), set(), set(), set()
+    completed_states = set()
+    def enqueue(path, nid, flags):
+        # State identity is AFTER entry effects, as in DialogueManager._goto.
+        state = (path, nid, apply(flags, graphs[path][nid].get("set_flag", {})))
+        if state not in discovered:
+            if len(discovered) >= max_states:
+                raise OverflowError
+            discovered.add(state)
+            queue.append(state)
+        return state
+    external_keys = sorted(set(external) & required)
+    def restart(flags):
+        # External values are assumptions, not invented dialogue producers.
+        for values in product(*(external[k] for k in external_keys)):
+            seed = apply(flags, dict(zip(external_keys, values)))
+            if seed in completed_states:
+                continue
+            completed_states.add(seed)
+            for path, nid in entries:
+                enqueue(path, nid, seed)
+    try:
+        restart((0,) * len(keys))
+        while queue:
+            state = queue.popleft()
+            path, nid, flags = state
+            seen_nodes.add((path, nid))
+            node = graphs[path][nid]
+            options = node.get("choices")
+            edges = [(None, node)] if options is None else [
+                (i, c) for i, c in enumerate(options)
+                if allows(flags, c.get("requires_flags", {}))
+            ]
+            if not edges:
+                blocked.add((path, nid))
+            for index, edge in edges:
+                if index is not None:
+                    chosen.add((path, nid, index))
+                after = apply(flags, edge.get("set_flag", {})) if index is not None else flags
+                if edge["next"] is None:
+                    terminals.add(state)
+                    restart(after)
+                else:
+                    dest = enqueue(path, edge["next"], after)
+                    reverse[dest].add(state)
+    except OverflowError:
+        errors.append(f"state exploration exceeded {max_states} states; analysis incomplete (not a pass)")
+        return errors, warnings
+    can_end = set(terminals)
+    queue = deque(terminals)
+    while queue:
+        for previous in reverse[queue.popleft()]:
+            if previous not in can_end:
+                can_end.add(previous)
+                queue.append(previous)
+    for path, nid in sorted(blocked):
+        errors.append(f"{path.name}:{nid}: reachable flag state has no eligible choices")
+    for path, nid in sorted({(p, n) for p, n, _ in discovered - can_end} - blocked):
+        errors.append(f"{path.name}:{nid}: reachable flag state has no path to an ending")
+    for path, graph in graphs.items():
+        for nid in sorted(structural[path]):
+            if (path, nid) not in seen_nodes:
+                errors.append(f"{path.name}:{nid}: unreachable once flag prerequisites are applied")
+            else:
+                for i in range(len(graph[nid].get("choices", []))):
+                    if (path, nid, i) not in chosen:
+                        errors.append(f"{path.name}:{nid}:choice #{i}: prerequisites can never be satisfied on a reachable visit")
     return errors, warnings
+
+
+def validate_paths(paths, external=None, max_states=MAX_STATES):
+    graphs, errors = {}, []
+    for path in paths:
+        try:
+            graph = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            errors.append(f"{path.name}: cannot read dialogue JSON: {exc}")
+            continue
+        found = check_schema(path, graph)
+        errors.extend(found)
+        if not found:
+            graphs[path] = graph
+    if errors:
+        return errors, []  # Do not traverse malformed graphs or infer missing producers.
+    return analyze(graphs, external, max_states)
+
+
+def validate_file(path: Path):
+    """Single-file compatibility helper; main analyzes the complete folder."""
+    return validate_paths([path])
 
 
 def main() -> int:
@@ -108,41 +255,16 @@ def main() -> int:
     if not files:
         print(f"No dialogue files found in {DIALOGUE_DIR}")
         return 1
-
-    all_errors: list[str] = []
-    all_warnings: list[str] = []
+    errors, warnings = validate_paths(files)
     for path in files:
-        errs, warns = validate_file(path)
-        all_errors += errs
-        all_warnings += warns
-        status = "OK" if not errs else "FAIL"
-        print(f"[{status}] {path.relative_to(ROOT)}  ({len(json.loads(path.read_text()))} nodes)")
-
-    for w in all_warnings:
-        print(f"  warning: {w}")
-    for e in all_errors:
-        print(f"  ERROR:   {e}")
-
-    print()
-    if all_errors:
-        print(f"✗ {len(all_errors)} error(s), {len(all_warnings)} warning(s)")
-        return 1
-    print(f"✓ all dialogue graphs valid ({len(all_warnings)} warning(s))")
-    return 0
+        print(f"[CHECKED] {path.relative_to(ROOT)}")
+    for message in warnings:
+        print(f"  warning: {message}")
+    for message in errors:
+        print(f"  ERROR: {message}")
+    print(f"{'FAIL' if errors else 'OK'}: {len(errors)} error(s), {len(warnings)} warning(s)")
+    return 1 if errors else 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
-
-
-# --- Public Demo: journal graphs -------------------------------------------
-# The journal system (scripts/journal.gd) reads discovered-log entries from the
-# same JSON-graph format, so they validate through the checker above. Journal
-# graphs live under data/dialogue/ with an "entry_*" id and are held to the same
-# rules (targets resolve, a terminal exists). This hook is a placeholder until
-# the journal content lands for the public demo.
-JOURNAL_ENTRY_PREFIX = "entry_"
-
-
-def is_journal_graph(graph: dict) -> bool:
-	return any(str(k).startswith(JOURNAL_ENTRY_PREFIX) for k in graph)
+    raise SystemExit(main())
