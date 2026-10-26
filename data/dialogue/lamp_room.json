@@ -28,7 +28,7 @@
 	"edith": {
 		"speaker": "",
 		"text": "You turn the matchbox over. The striking strip is worn almost smooth. You put it back exactly where she left it, then think better of that and take a match.",
-		"next": "relight"
+		"next": "edith_log"
 	},
 	"relight": {
 		"speaker": "",
@@ -51,7 +51,7 @@
 				"requires_flags": {
 					"believer": true
 				},
-				"next": "believer_view"
+				"next": "rhythm_log"
 			},
 			{
 				"text": "Go down and tell Tom what you saw.",
@@ -102,5 +102,15 @@
 		"speaker": "",
 		"text": "You keep counting the flashes. If Tom asks, the lamp is working. That is all you need to tell him.",
 		"next": "end"
+	},
+	"edith_log": {
+		"speaker": "Edith Vane",
+		"text": "\"I will relight the lamp first so whoever comes next can find the way back. Forgive the mess. — E.V.\"",
+		"next": "relight"
+	},
+	"rhythm_log": {
+		"speaker": "Edith Vane",
+		"text": "\"It keeps my rhythm — three flashes, then dark — and I have told no one because there is no one out there to tell.\"",
+		"next": "believer_view"
 	}
 }
