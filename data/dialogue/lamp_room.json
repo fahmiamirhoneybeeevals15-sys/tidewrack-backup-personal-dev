@@ -61,6 +61,13 @@
 				"next": "tom_view"
 			},
 			{
+				"text": "Keep this to yourself.",
+				"requires_flags": {
+					"trusted_edith": false
+				},
+				"next": "quiet_view"
+			},
+			{
 				"text": "Stay beside the lamp and watch.",
 				"next": "watch"
 			}
@@ -90,5 +97,10 @@
 		"speaker": "",
 		"text": "The lamp turns. The north rocks disappear into fog again. You keep counting after there is nothing left to count.",
 		"next": null
+	},
+	"quiet_view": {
+		"speaker": "",
+		"text": "You keep counting the flashes. If Tom asks, the lamp is working. That is all you need to tell him.",
+		"next": "end"
 	}
 }
