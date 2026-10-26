@@ -24,6 +24,26 @@ func get_flag(name: String, default: Variant = false) -> Variant:
 	return flags.get(name, default)
 
 
+## All requirements must match. Missing flags count as false.
+## Read-only: never changes flags or emits state_changed.
+## Invalid requirements and non-boolean stored values fail closed.
+func meets_flag_requirements(requirements: Variant) -> bool:
+	if typeof(requirements) != TYPE_DICTIONARY:
+		return false
+	for key in requirements:
+		if typeof(key) != TYPE_STRING:
+			return false
+		if key.is_empty():
+			return false
+		var expected: Variant = requirements[key]
+		if typeof(expected) != TYPE_BOOL:
+			return false
+		var actual: Variant = get_flag(key, false)
+		if typeof(actual) != TYPE_BOOL or actual != expected:
+			return false
+	return true
+
+
 func new_game() -> void:
 	flags.clear()
 	current_scene = "res://scenes/game.tscn"
